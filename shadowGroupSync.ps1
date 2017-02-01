@@ -83,7 +83,7 @@ Function Get-SourceObjects($searchbase, $domain, $type, $scope)
         default
         {
           Write-Error "Invalid type specified"
-          Exit
+          Exit(1000)
         }
       }
     }
@@ -96,7 +96,7 @@ Function Get-SourceObjects($searchbase, $domain, $type, $scope)
     Catch
     {
       Write-Error $_
-      Exit
+      Exit(1000)
     }
 
     return $obj
@@ -134,12 +134,14 @@ Function Add-ShadowGroupMember($group, $member)
   {
     Write-Verbose "Adding $($member.Name)"
     Add-ADGroupMember -Identity $group -Members $member.objectGUID -ErrorAction Stop
+    return $true
   }
 
   Catch
   {
     Write-Warning "Failed to add $member to group $group"
     Write-Error $_
+    return $false
   }
 }
 
@@ -154,12 +156,14 @@ Function Remove-ShadowGroupMember($group, $member)
   {
     Write-Verbose "Removing $($member.Name)"
     Remove-ADGroupMember -Identity $group -Members $member.objectGUID -Confirm:$false -ErrorAction Stop
+    return $true
   }
 
   Catch
   {
     Write-Warning "Failed to remove $member from group $group"
     Write-Error $_
+    return $false
   }
 }
 
@@ -234,6 +238,8 @@ Function Confirm-Destination($destou, $groupname)
   return $true
 }
 
+#Count the number of failed changes
+$errorcount=0
 #Iterate through the CSV and action each shadow group.
 foreach ($cs in $csv)
 {
@@ -241,6 +247,7 @@ foreach ($cs in $csv)
 
   if (!(Confirm-Destination $cs.DestOU $cs.GroupName))
   {
+    $errorcount++
     continue
   }
 
@@ -255,7 +262,10 @@ foreach ($cs in $csv)
 
     foreach ($o in $obj)
     {
-      Add-ShadowGroupMember $cs.GroupName $o
+      if (!(Add-ShadowGroupMember $cs.GroupName $o))
+      {
+        $errorcount++
+      }
     }
   }
 
@@ -266,7 +276,10 @@ foreach ($cs in $csv)
 
     foreach ($member in $groupmembers)
     {
-      Remove-ShadowGroupMember $cs.GroupName $member
+      if (!(Remove-ShadowGroupMember $cs.GroupName $member))
+      {
+        $errorcount++
+      }
     }
   }
 
@@ -277,15 +290,28 @@ foreach ($cs in $csv)
     {
       {$_.SideIndicator -eq "=>"}
       {
-        Add-ShadowGroupMember $cs.GroupName $_
+        if (!(Add-ShadowGroupMember $cs.GroupName $_))
+        {
+            $errorcount++
+        }
       }
 
       {$_.SideIndicator -eq "<="}
       {
-        Remove-ShadowGroupMember $cs.GroupName $_
+        if (!(Remove-ShadowGroupMember $cs.GroupName $_))
+        {
+            $errorcount++
+        }
       }
     }
   }
 
   Write-Verbose "$($cs.GroupName) sync complete."
 }
+
+# Make sure the script failes, if there were errors (Needed for tools like jenkins)
+if($errorcount -gt 0)
+{
+  Write-Error "There were $($errorcount) errors."
+}
+Exit($errorcount)
