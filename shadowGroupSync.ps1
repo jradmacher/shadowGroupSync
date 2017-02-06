@@ -103,21 +103,34 @@ Function Get-SourceObjects($searchbase, $domain, $type, $scope)
   }
 }
 
-#Gets the members from the shadow group. If the group does not exist, create it.
+#Creates the shadow group, if the group does not exist.
 #Param1: $groupname - The shadowgroup name to get members from.
 #        Example: "ShadowGroup-1"
 #Param2: $destou - The OU the shadowgroup exists in.
 #        Example: "OU=ShadowGroups,DC=contoso,DC=com"
-#Param3: $scope - The grouptype the shadowgroup should be created as (If it doesn't exist)
+#Param3: $grouptype - The grouptype the shadowgroup should be created as (If it doesn't exist)
 #        Example: 0 (Distribution) or 1 (Security)
-Function Get-ShadowGroupMembers($groupname, $destou, $grouptype)
+#Param4: $mail - Distributiongroups need an emailaddress to work
+Function New-ADGroup-IfNotExists($groupname, $destou, $grouptype, $mail=$null)
 {
+  #Default for Security Groups
+  #For use with Fine Grained Password Policies, the GroupScope should be Global.
+  #If you are using this script with child domains, it may need to be set to Universal.
+  $groupscope="Global"
+  #For Office365 Distributiongroups need to be Universal
+  if($grouptype -eq 0){$groupscope="Universal"}
+
   if (!(Get-ADGroup -Filter {SamAccountName -eq $groupname} -SearchBase $destou))
   {
-    #For use with Fine Grained Password Policies, the GroupScope should be Global.
-    #If you are using this script with child domains, it may need to be set to Universal.
-    New-ADGroup -Name $groupname -SamAccountName $groupname -Path $destou -Groupcategory $grouptype -GroupScope Global
+    New-ADGroup -Name $groupname -SamAccountName $groupname -Path $destou -Groupcategory $grouptype -GroupScope $groupscope -OtherAttributes @{'mail'="$($mail)"}
   }
+}
+
+#Gets the members from the shadow group. If the group does not exist, create it.
+#Param1: $groupname - The shadowgroup name to get members from.
+#        Example: "ShadowGroup-1"
+Function Get-ShadowGroupMembers($groupname)
+{
 
   $groupmembers = Get-ADGroupMember -Identity $groupname
   return $groupmembers
@@ -253,8 +266,9 @@ foreach ($cs in $csv)
 
   #Populate the source and destination set for comparison.
   $obj = Get-SourceObjects $cs.SourceOU $cs.Domain $cs.ObjType (Check-SourceScope $cs.Recurse)
-  $groupmembers = Get-ShadowGroupMembers $cs.Groupname $cs.Destou (Check-GroupCategory $cs.GroupType)
-
+  New-ADGroup-IfNotExists $cs.Groupname $cs.Destou (Check-GroupCategory $cs.GroupType) $cs.Mail
+  $groupmembers = Get-ShadowGroupMembers $cs.Groupname
+  
   #If the group is empty, populate the group.
   if ((!$groupmembers) -and ($obj))
   {
